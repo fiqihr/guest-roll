@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react'
+import React, { createContext, useState, useContext, useEffect, useCallback } from 'react'
 
 const AppContext = createContext()
 
@@ -20,28 +20,30 @@ export const AppProvider = ({ children }) => {
     if (savedShots) setRemainingShots(parseInt(savedShots, 10))
   }, [])
 
-  const updateGuestName = (name) => {
+  const updateGuestName = useCallback((name) => {
     setGuestName(name)
     localStorage.setItem('guestName', name)
-  }
+  }, [])
 
-  const decrementShots = () => {
-    const newShots = Math.max(0, remainingShots - 1)
-    setRemainingShots(newShots)
-    localStorage.setItem('remainingShots', newShots.toString())
-  }
+  const decrementShots = useCallback(() => {
+    setRemainingShots((prevShots) => {
+      const newShots = Math.max(0, prevShots - 1)
+      localStorage.setItem('remainingShots', newShots.toString())
+      return newShots
+    })
+  }, [])
 
-  const addCapturedPhoto = (base64Str) => {
+  const addCapturedPhoto = useCallback((base64Str) => {
     setCapturedPhotos((prev) => [...prev, base64Str])
-  }
+  }, [])
 
-  const resetSession = () => {
+  const resetSession = useCallback(() => {
     setGuestName('')
-    setRemainingShots(2)
+    setRemainingShots(15)
     setCapturedPhotos([])
     localStorage.removeItem('guestName')
     localStorage.removeItem('remainingShots')
-  }
+  }, [])
 
   return (
     <AppContext.Provider

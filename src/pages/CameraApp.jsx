@@ -1,8 +1,8 @@
-import React, { useRef, useCallback, useState } from 'react';
+import React, { useRef, useCallback, useState, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import { useNavigate } from 'react-router-dom';
 import imageCompression from 'browser-image-compression';
-import { Camera as CameraIcon } from 'lucide-react';
+import { Camera as CameraIcon, RefreshCw } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import CameraPreview from '../components/CameraPreview';
 
@@ -13,6 +13,40 @@ const CameraApp = () => {
   
   const [photoPreview, setPhotoPreview] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [devices, setDevices] = useState([]);
+  const [activeDeviceId, setActiveDeviceId] = useState(null);
+
+  useEffect(() => {
+    const getDevices = async () => {
+      try {
+        const mediaDevices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = mediaDevices.filter(device => device.kind === 'videoinput');
+        setDevices(videoDevices);
+        
+        // Try to find the main back camera
+        const backCamera = videoDevices.find(d => 
+          d.label.toLowerCase().includes('back') || 
+          d.label.toLowerCase().includes('environment')
+        );
+        if (backCamera) {
+          setActiveDeviceId(backCamera.deviceId);
+        } else if (videoDevices.length > 0) {
+          setActiveDeviceId(videoDevices[0].deviceId);
+        }
+      } catch (error) {
+        console.error("Error fetching devices", error);
+      }
+    };
+    getDevices();
+  }, []);
+
+  const handleSwitchCamera = () => {
+    if (devices.length > 1) {
+      const currentIndex = devices.findIndex(d => d.deviceId === activeDeviceId);
+      const nextIndex = (currentIndex + 1) % devices.length;
+      setActiveDeviceId(devices[nextIndex].deviceId);
+    }
+  };
 
   const capture = useCallback(() => {
     const imageSrc = webcamRef.current.getScreenshot();
@@ -98,8 +132,8 @@ const CameraApp = () => {
   const videoConstraints = {
     width: { ideal: 1920 },
     height: { ideal: 2560 },
-    facingMode: "environment", // Use rear camera by default
-    aspectRatio: 0.75 // 3:4 Portrait
+    aspectRatio: 0.75, // 3:4 Portrait
+    ...(activeDeviceId ? { deviceId: { exact: activeDeviceId } } : { facingMode: "environment" })
   };
 
   return (
@@ -133,14 +167,27 @@ const CameraApp = () => {
 
       {/* Shutter Button Container */}
       <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-black/90 to-transparent flex items-center justify-center pb-8 z-10">
-        <button
-          onClick={capture}
-          className="w-20 h-20 rounded-full border-4 border-white/80 bg-white/20 backdrop-blur-sm flex items-center justify-center active:scale-95 active:bg-white/40 transition-all shadow-[0_0_20px_rgba(255,255,255,0.4)]"
-        >
-          <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center">
-            <CameraIcon className="w-6 h-6 text-dark" />
-          </div>
-        </button>
+        
+        <div className="relative w-full max-w-md flex justify-center items-center">
+          <button
+            onClick={capture}
+            className="w-20 h-20 rounded-full border-4 border-white/80 bg-white/20 backdrop-blur-sm flex items-center justify-center active:scale-95 active:bg-white/40 transition-all shadow-[0_0_20px_rgba(255,255,255,0.4)] z-20"
+          >
+            <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center">
+              <CameraIcon className="w-6 h-6 text-dark" />
+            </div>
+          </button>
+
+          {/* Switch Camera Button */}
+          {devices.length > 1 && (
+            <button 
+              onClick={handleSwitchCamera}
+              className="absolute right-8 w-12 h-12 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/30 active:scale-95 transition-transform"
+            >
+              <RefreshCw className="w-5 h-5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Preview Overlay */}
