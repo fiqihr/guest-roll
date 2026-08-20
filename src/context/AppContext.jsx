@@ -39,7 +39,7 @@ export const AppProvider = ({ children }) => {
 
   const resetSession = useCallback(() => {
     setGuestName('')
-    setRemainingShots(15)
+    setRemainingShots(2)
     setCapturedPhotos([])
     localStorage.removeItem('guestName')
     localStorage.removeItem('remainingShots')
