@@ -6,72 +6,60 @@ import { useAppContext } from '../context/AppContext';
 import CameraPreview from '../components/CameraPreview';
 
 /**
- * Find the camera with the highest resolution from a list of devices.
- * The primary/main camera always supports the highest resolution
- * compared to ultrawide, macro, or depth cameras.
+ * Parse camera2 ID from Android Chrome label.
+ * e.g. "camera2 0, facing back" → 0
+ *      "camera2 2, facing back" → 2
+ * Returns null if no match.
  */
-const findHighestResCamera = async (cameras) => {
-  let bestCamera = cameras[0];
-  let bestResolution = 0;
-
-  for (const camera of cameras) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          deviceId: { exact: camera.deviceId },
-          width: { ideal: 9999 },
-          height: { ideal: 9999 }
-        }
-      });
-      const track = stream.getVideoTracks()[0];
-      const settings = track.getSettings();
-      const resolution = (settings.width || 0) * (settings.height || 0);
-
-      // Stop the test stream immediately
-      stream.getTracks().forEach(t => t.stop());
-
-      console.log(`Camera "${camera.label}": ${settings.width}x${settings.height} (${resolution}px)`);
-
-      if (resolution > bestResolution) {
-        bestResolution = resolution;
-        bestCamera = camera;
-      }
-    } catch (e) {
-      console.warn(`Could not test camera "${camera.label}":`, e.message);
-    }
-  }
-
-  return bestCamera;
+const parseCameraId = (label) => {
+  const match = label.match(/camera2?\s*(\d+)/i);
+  return match ? parseInt(match[1], 10) : null;
 };
 
 /**
  * Find the main back and front cameras.
- * Groups by facing direction, then picks the highest-resolution back camera
- * (which is always the main/primary sensor on Android devices).
+ * 
+ * Strategy:
+ * 1. Parse "camera2 X" from label — on Android, camera2 0 = primary rear camera (ALWAYS)
+ * 2. If labels don't have camera IDs, pick the first back/front camera
  */
-const findMainCameras = async (videoDevices) => {
+const findMainCameras = (videoDevices) => {
   const backCameras = videoDevices.filter(d => {
     const label = d.label.toLowerCase();
-    return label.includes('back') || label.includes('rear') || label.includes('environment');
+    return label.includes('back') || label.includes('rear') || 
+           label.includes('environment') || label.includes('facing back');
   });
 
   const frontCameras = videoDevices.filter(d => {
     const label = d.label.toLowerCase();
-    return label.includes('front') || label.includes('user') || label.includes('face');
+    return label.includes('front') || label.includes('user') || 
+           label.includes('face') || label.includes('facing front');
   });
 
-  // For back camera: pick the one with highest resolution (= main sensor)
-  let mainBack = null;
-  if (backCameras.length > 1) {
-    mainBack = await findHighestResCamera(backCameras);
-  } else {
-    mainBack = backCameras[0] || null;
-  }
+  // Sort by camera ID — lowest ID = primary/main camera
+  const sortById = (a, b) => {
+    const idA = parseCameraId(a.label);
+    const idB = parseCameraId(b.label);
+    if (idA !== null && idB !== null) return idA - idB;
+    if (idA !== null) return -1;
+    if (idB !== null) return 1;
+    return 0;
+  };
 
-  // For front camera: usually only one, pick the first
+  backCameras.sort(sortById);
+  frontCameras.sort(sortById);
+
+  const mainBack = backCameras[0] || null;
   const mainFront = frontCameras[0] || null;
 
   return { mainBack, mainFront };
+};
+
+/**
+ * Check if getUserMedia is available (requires secure context: HTTPS or localhost)
+ */
+const isGetUserMediaSupported = () => {
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 };
 
 const CameraApp = () => {
@@ -89,6 +77,14 @@ const CameraApp = () => {
   // Enumerate devices and find the correct main cameras
   useEffect(() => {
     const initCameras = async () => {
+      // If getUserMedia not available (e.g. HTTP on mobile), skip enumeration
+      // and fall back to simple facingMode constraints
+      if (!isGetUserMediaSupported()) {
+        console.warn('getUserMedia not available (non-secure context?). Using facingMode fallback.');
+        setCameraReady(true);
+        return;
+      }
+
       try {
         // Request permission first so labels are available
         const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -96,12 +92,15 @@ const CameraApp = () => {
         const allDevices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = allDevices.filter(d => d.kind === 'videoinput');
 
-        // Stop the temporary stream so it doesn't block subsequent camera access
+        // Stop the temporary stream immediately
         tempStream.getTracks().forEach(track => track.stop());
 
-        console.log('All cameras found:', videoDevices.map(d => `${d.label} (${d.deviceId.slice(0,8)})`));
+        console.log('All cameras found:', videoDevices.map(d => {
+          const id = parseCameraId(d.label);
+          return `${d.label} [cameraId=${id}] (${d.deviceId.slice(0,8)})`;
+        }));
 
-        const { mainBack, mainFront } = await findMainCameras(videoDevices);
+        const { mainBack, mainFront } = findMainCameras(videoDevices);
 
         if (mainBack) {
           setMainBackId(mainBack.deviceId);
@@ -111,13 +110,12 @@ const CameraApp = () => {
           setMainFrontId(mainFront.deviceId);
           console.log('✅ Selected main FRONT camera:', mainFront.label);
         }
-
-        setCameraReady(true);
       } catch (error) {
         console.error('Error initializing cameras:', error);
-        // Fallback: just use facingMode without specific deviceId
-        setCameraReady(true);
+        // Will fall back to facingMode constraints
       }
+
+      setCameraReady(true);
     };
     initCameras();
   }, []);
@@ -142,13 +140,11 @@ const CameraApp = () => {
     let cropW, cropH, offsetX, offsetY;
 
     if (vw / vh > targetRatio) {
-      // Video is wider than 3:4 — crop sides
       cropH = vh;
       cropW = Math.round(vh * targetRatio);
       offsetX = Math.round((vw - cropW) / 2);
       offsetY = 0;
     } else {
-      // Video is taller than 3:4 — crop top/bottom
       cropW = vw;
       cropH = Math.round(vw / targetRatio);
       offsetX = 0;
@@ -160,7 +156,7 @@ const CameraApp = () => {
     canvas.height = cropH;
     const ctx = canvas.getContext('2d');
 
-    // If front camera and mirrored, flip horizontally
+    // If front camera, flip horizontally for mirror effect
     if (isFrontCamera) {
       ctx.translate(cropW, 0);
       ctx.scale(-1, 1);
@@ -168,7 +164,6 @@ const CameraApp = () => {
 
     ctx.drawImage(video, offsetX, offsetY, cropW, cropH, 0, 0, cropW, cropH);
 
-    // Export as high-quality JPEG (no additional compression)
     const imageSrc = canvas.toDataURL('image/jpeg', 0.92);
     console.log(`Captured image: ${cropW}x${cropH}, size ~${Math.round(imageSrc.length * 0.75 / 1024)}KB`);
     setPhotoPreview(imageSrc);
@@ -183,13 +178,11 @@ const CameraApp = () => {
     setIsUploading(true);
 
     try {
-      // Use the photo directly — no additional compression to preserve quality
       addCapturedPhoto(photoPreview);
 
       // Upload to Google Drive via Apps Script
       const scriptUrl = "https://script.google.com/macros/s/AKfycbwUHx6OaF-JIwYtDf82DZif8Ic9YtwPpEnM1FtcWQFtPGYhDSatKqTlXFoyIRIWfJdp/exec";
       
-      // Format filename nicely (e.g. Yusuf_103045.jpg)
       const safeName = guestName.replace(/[^a-zA-Z0-9]/g, '_');
       const timeString = new Date().toLocaleTimeString('id-ID', { hour12: false }).replace(/:/g, '');
       const finalFileName = `${safeName}_${timeString}.jpg`;
@@ -210,7 +203,6 @@ const CameraApp = () => {
         throw new Error(result.message || "Failed to upload to Drive");
       }
       
-      // Success
       decrementShots();
       setPhotoPreview(null);
       
@@ -226,7 +218,7 @@ const CameraApp = () => {
     }
   };
 
-  // Build video constraints: use specific deviceId if available, fallback to facingMode
+  // Build video constraints
   const activeDeviceId = isFrontCamera ? mainFrontId : mainBackId;
   
   const videoConstraints = {
