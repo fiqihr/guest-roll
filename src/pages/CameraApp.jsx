@@ -1,7 +1,6 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import { useNavigate } from 'react-router-dom';
-import imageCompression from 'browser-image-compression';
 import { Camera as CameraIcon, RefreshCw } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import CameraPreview from '../components/CameraPreview';
@@ -32,8 +31,6 @@ const findMainCameras = (videoDevices) => {
     return isFront && !isExcluded(d.label);
   });
 
-  // Main back = first matching, or first device as fallback
-  // Main front = first matching front camera
   const mainBack = backCameras[0] || null;
   const mainFront = frontCameras[0] || null;
 
@@ -57,9 +54,13 @@ const CameraApp = () => {
     const initCameras = async () => {
       try {
         // Request permission first so labels are available
-        await navigator.mediaDevices.getUserMedia({ video: true });
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        
         const allDevices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = allDevices.filter(d => d.kind === 'videoinput');
+
+        // IMPORTANT: Stop the temporary stream so it doesn't block the Webcam component
+        tempStream.getTracks().forEach(track => track.stop());
 
         console.log('Available cameras:', videoDevices.map(d => `${d.label} (${d.deviceId.slice(0,8)})`));
 
@@ -88,7 +89,7 @@ const CameraApp = () => {
     setIsFrontCamera(prev => !prev);
   };
 
-  // Capture screenshot and crop to exact 3:4 portrait
+  // Capture screenshot and crop to exact 3:4 portrait at full resolution
   const capture = useCallback(() => {
     const video = webcamRef.current?.video;
     if (!video) return;
@@ -96,6 +97,8 @@ const CameraApp = () => {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     if (!vw || !vh) return;
+
+    console.log(`Video stream resolution: ${vw}x${vh}`);
 
     // Calculate crop region for 3:4 portrait (width:height = 3:4)
     const targetRatio = 3 / 4;
@@ -128,8 +131,9 @@ const CameraApp = () => {
 
     ctx.drawImage(video, offsetX, offsetY, cropW, cropH, 0, 0, cropW, cropH);
 
-    // Export as high-quality JPEG
-    const imageSrc = canvas.toDataURL('image/jpeg', 0.95);
+    // Export as high-quality JPEG (no additional compression)
+    const imageSrc = canvas.toDataURL('image/jpeg', 0.92);
+    console.log(`Captured image: ${cropW}x${cropH}, size ~${Math.round(imageSrc.length * 0.75 / 1024)}KB`);
     setPhotoPreview(imageSrc);
   }, [isFrontCamera]);
 
@@ -142,34 +146,13 @@ const CameraApp = () => {
     setIsUploading(true);
 
     try {
-      // 1. Convert base64 to File object
-      const res = await fetch(photoPreview);
-      const blob = await res.blob();
-      const file = new File([blob], `photo_${Date.now()}.jpg`, { type: 'image/jpeg' });
-
-      // 2. Compress Image (light compression to preserve quality for important moments)
-      const options = {
-        maxSizeMB: 10,
-        maxWidthOrHeight: 2560,
-        initialQuality: 0.92,
-        useWebWorker: true,
-      };
-      
-      const compressedFile = await imageCompression(file, options);
-
-      // 3. Convert compressed file back to base64 for Google Apps Script
-      const getBase64 = (file) => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = error => reject(error);
-      });
-      const base64Compressed = await getBase64(compressedFile);
+      // Use the photo directly — no additional compression to preserve quality
+      // The canvas already exports at 0.92 JPEG quality which is excellent
 
       // Save in React state for the ephemeral Thank You page recap
-      addCapturedPhoto(base64Compressed);
+      addCapturedPhoto(photoPreview);
 
-      // 4. Upload to Google Drive via Apps Script
+      // Upload to Google Drive via Apps Script
       const scriptUrl = "https://script.google.com/macros/s/AKfycbwUHx6OaF-JIwYtDf82DZif8Ic9YtwPpEnM1FtcWQFtPGYhDSatKqTlXFoyIRIWfJdp/exec";
       
       // Format filename nicely (e.g. Yusuf_103045.jpg)
@@ -183,7 +166,7 @@ const CameraApp = () => {
           "Content-Type": "text/plain;charset=utf-8",
         },
         body: JSON.stringify({
-          image: base64Compressed,
+          image: photoPreview,
           filename: finalFileName
         })
       });
@@ -193,7 +176,7 @@ const CameraApp = () => {
         throw new Error(result.message || "Failed to upload to Drive");
       }
       
-      // 5. Success
+      // Success
       decrementShots();
       setPhotoPreview(null);
       
