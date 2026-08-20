@@ -8,9 +8,10 @@ import { clearLocalPhotos } from '../utils/storage'
 
 export const AppProvider = ({ children }) => {
   const [guestName, setGuestName] = useState('')
-  const [remainingShots, setRemainingShots] = useState(15) // Note: using 3 for testing based on previous edit by user
+  const [remainingShots, setRemainingShots] = useState(2) // Reset back to 15 shots
+  const [capturedPhotos, setCapturedPhotos] = useState([]) // Only in memory!
 
-  // Persist state in localStorage so it doesn't reset on refresh
+  // Persist guest info in localStorage so it doesn't reset on refresh
   useEffect(() => {
     const savedName = localStorage.getItem('guestName')
     const savedShots = localStorage.getItem('remainingShots')
@@ -30,13 +31,16 @@ export const AppProvider = ({ children }) => {
     localStorage.setItem('remainingShots', newShots.toString())
   }
 
-  const resetSession = async () => {
+  const addCapturedPhoto = (base64Str) => {
+    setCapturedPhotos((prev) => [...prev, base64Str])
+  }
+
+  const resetSession = () => {
     setGuestName('')
-    // Actually, maybe we should reset to 15, but I'll stick to 3 for now so they can test easily.
-    setRemainingShots(15)
+    setRemainingShots(2)
+    setCapturedPhotos([])
     localStorage.removeItem('guestName')
     localStorage.removeItem('remainingShots')
-    await clearLocalPhotos()
   }
 
   return (
@@ -46,6 +50,8 @@ export const AppProvider = ({ children }) => {
         updateGuestName,
         remainingShots,
         decrementShots,
+        capturedPhotos,
+        addCapturedPhoto,
         resetSession
       }}
     >

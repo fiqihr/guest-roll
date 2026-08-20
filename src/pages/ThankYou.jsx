@@ -1,26 +1,28 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Heart, RefreshCw, Image as ImageIcon } from 'lucide-react'
 import { useAppContext } from '../context/AppContext'
-import { getLocalPhotos } from '../utils/storage'
 
 const ThankYou = () => {
-  const { guestName, resetSession } = useAppContext()
+  const { guestName, resetSession, capturedPhotos } = useAppContext()
   const navigate = useNavigate()
-  const [photos, setPhotos] = useState([])
 
   useEffect(() => {
-    const loadPhotos = async () => {
-      const saved = await getLocalPhotos()
-      setPhotos(saved)
+    // Jika tamu meresfresh halaman ini (atau state foto hilang),
+    // langsung reset sesi dan tendang ke halaman awal
+    if (capturedPhotos.length === 0) {
+      resetSession()
+      navigate('/')
     }
-    loadPhotos()
-  }, [])
+  }, [capturedPhotos, resetSession, navigate])
 
-  const handleReset = async () => {
-    await resetSession()
+  const handleReset = () => {
+    resetSession()
     navigate('/')
   }
+
+  // Jika sedang memproses redirect, cegah kedip UI
+  if (capturedPhotos.length === 0) return null;
 
   return (
     <div className='min-h-screen flex flex-col items-center p-6 bg-[url("/cover.jpeg")] bg-cover bg-center bg-fixed'>
@@ -36,7 +38,7 @@ const ThankYou = () => {
           Roll film kamu sudah habis, <span className='font-bold text-cream'>{guestName}</span>.
         </p>
 
-        {photos.length > 0 && (
+        {capturedPhotos.length > 0 && (
           <div className='mb-12'>
             <div className='flex items-center justify-center gap-2 mb-6'>
               <ImageIcon className='w-5 h-5 text-gold/70' />
@@ -44,7 +46,7 @@ const ThankYou = () => {
             </div>
 
             <div className='flex flex-wrap justify-center gap-4'>
-              {photos.map((src, idx) => {
+              {capturedPhotos.map((src, idx) => {
                 // Generate a slight random rotation for polaroid effect
                 // using index to keep it consistent on re-renders
                 const rotation = (idx % 2 === 0 ? 1 : -1) * ((idx % 3) * 2 + 1)
