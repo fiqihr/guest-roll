@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Heart, RefreshCw, Image as ImageIcon } from 'lucide-react'
 import { useAppContext } from '../context/AppContext'
@@ -6,15 +6,19 @@ import { useAppContext } from '../context/AppContext'
 const ThankYou = () => {
   const { guestName, resetSession, capturedPhotos } = useAppContext()
   const navigate = useNavigate()
+  const hasRedirected = useRef(false)
 
   useEffect(() => {
-    // Jika tamu meresfresh halaman ini (atau state foto hilang),
-    // langsung reset sesi dan tendang ke halaman awal
-    if (capturedPhotos.length === 0) {
+    // Jika tamu merefresh halaman ini (state foto hilang),
+    // langsung reset sesi dan tendang ke halaman awal.
+    // Gunakan ref agar hanya dijalankan sekali, mencegah infinite loop.
+    if (capturedPhotos.length === 0 && !hasRedirected.current) {
+      hasRedirected.current = true
       resetSession()
-      navigate('/')
+      navigate('/', { replace: true })
     }
-  }, [capturedPhotos, resetSession, navigate])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleReset = () => {
     resetSession()
@@ -86,3 +90,4 @@ const ThankYou = () => {
 }
 
 export default ThankYou
+

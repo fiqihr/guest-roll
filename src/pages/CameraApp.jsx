@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useState, useEffect } from 'react';
+import React, { useRef, useCallback, useState } from 'react';
 import Webcam from 'react-webcam';
 import { useNavigate } from 'react-router-dom';
 import imageCompression from 'browser-image-compression';
@@ -13,39 +13,13 @@ const CameraApp = () => {
   
   const [photoPreview, setPhotoPreview] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [devices, setDevices] = useState([]);
-  const [activeDeviceId, setActiveDeviceId] = useState(null);
+  // Use facingMode to toggle between front and back camera only
+  const [facingMode, setFacingMode] = useState('environment'); // 'environment' = back, 'user' = front
 
-  useEffect(() => {
-    const getDevices = async () => {
-      try {
-        const mediaDevices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = mediaDevices.filter(device => device.kind === 'videoinput');
-        setDevices(videoDevices);
-        
-        // Try to find the main back camera
-        const backCamera = videoDevices.find(d => 
-          d.label.toLowerCase().includes('back') || 
-          d.label.toLowerCase().includes('environment')
-        );
-        if (backCamera) {
-          setActiveDeviceId(backCamera.deviceId);
-        } else if (videoDevices.length > 0) {
-          setActiveDeviceId(videoDevices[0].deviceId);
-        }
-      } catch (error) {
-        console.error("Error fetching devices", error);
-      }
-    };
-    getDevices();
-  }, []);
+  const isFrontCamera = facingMode === 'user';
 
   const handleSwitchCamera = () => {
-    if (devices.length > 1) {
-      const currentIndex = devices.findIndex(d => d.deviceId === activeDeviceId);
-      const nextIndex = (currentIndex + 1) % devices.length;
-      setActiveDeviceId(devices[nextIndex].deviceId);
-    }
+    setFacingMode(prev => prev === 'environment' ? 'user' : 'environment');
   };
 
   const capture = useCallback(() => {
@@ -133,7 +107,7 @@ const CameraApp = () => {
     width: { ideal: 1920 },
     height: { ideal: 2560 },
     aspectRatio: 0.75, // 3:4 Portrait
-    ...(activeDeviceId ? { deviceId: { exact: activeDeviceId } } : { facingMode: "environment" })
+    facingMode: facingMode
   };
 
   return (
@@ -161,7 +135,9 @@ const CameraApp = () => {
           ref={webcamRef}
           screenshotFormat="image/jpeg"
           videoConstraints={videoConstraints}
+          mirrored={isFrontCamera}
           className="w-full h-full object-cover"
+          key={facingMode}
         />
       </div>
 
@@ -179,14 +155,12 @@ const CameraApp = () => {
           </button>
 
           {/* Switch Camera Button */}
-          {devices.length > 1 && (
-            <button 
-              onClick={handleSwitchCamera}
-              className="absolute right-8 w-12 h-12 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/30 active:scale-95 transition-transform"
-            >
-              <RefreshCw className="w-5 h-5" />
-            </button>
-          )}
+          <button 
+            onClick={handleSwitchCamera}
+            className="absolute right-8 w-12 h-12 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/30 active:scale-95 transition-transform"
+          >
+            <RefreshCw className="w-5 h-5" />
+          </button>
         </div>
       </div>
 
