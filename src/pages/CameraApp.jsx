@@ -1,10 +1,44 @@
-import React, { useRef, useCallback, useState } from 'react';
+import React, { useRef, useCallback, useState, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import { useNavigate } from 'react-router-dom';
 import imageCompression from 'browser-image-compression';
 import { Camera as CameraIcon, RefreshCw } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import CameraPreview from '../components/CameraPreview';
+
+/**
+ * Filter video devices to find the main back and main front camera.
+ * Excludes ultrawide, macro, depth, and other non-primary cameras.
+ */
+const findMainCameras = (videoDevices) => {
+  const excludeKeywords = ['wide', 'ultra', 'macro', 'depth', 'tele', 'infrared'];
+  
+  const isExcluded = (label) => {
+    const lower = label.toLowerCase();
+    return excludeKeywords.some(kw => lower.includes(kw));
+  };
+
+  // Find back cameras (not excluded)
+  const backCameras = videoDevices.filter(d => {
+    const label = d.label.toLowerCase();
+    const isBack = label.includes('back') || label.includes('rear') || label.includes('environment');
+    return isBack && !isExcluded(d.label);
+  });
+
+  // Find front cameras (not excluded)
+  const frontCameras = videoDevices.filter(d => {
+    const label = d.label.toLowerCase();
+    const isFront = label.includes('front') || label.includes('user') || label.includes('face');
+    return isFront && !isExcluded(d.label);
+  });
+
+  // Main back = first matching, or first device as fallback
+  // Main front = first matching front camera
+  const mainBack = backCameras[0] || null;
+  const mainFront = frontCameras[0] || null;
+
+  return { mainBack, mainFront };
+};
 
 const CameraApp = () => {
   const webcamRef = useRef(null);
@@ -13,21 +47,91 @@ const CameraApp = () => {
   
   const [photoPreview, setPhotoPreview] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
-  // Use facingMode to toggle between front and back camera only
-  const [facingMode, setFacingMode] = useState('environment'); // 'environment' = back, 'user' = front
+  const [isFrontCamera, setIsFrontCamera] = useState(false);
+  const [mainBackId, setMainBackId] = useState(null);
+  const [mainFrontId, setMainFrontId] = useState(null);
+  const [cameraReady, setCameraReady] = useState(false);
 
-  const isFrontCamera = facingMode === 'user';
+  // Enumerate devices once to find main back & front cameras
+  useEffect(() => {
+    const initCameras = async () => {
+      try {
+        // Request permission first so labels are available
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        const allDevices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = allDevices.filter(d => d.kind === 'videoinput');
+
+        console.log('Available cameras:', videoDevices.map(d => `${d.label} (${d.deviceId.slice(0,8)})`));
+
+        const { mainBack, mainFront } = findMainCameras(videoDevices);
+
+        if (mainBack) {
+          setMainBackId(mainBack.deviceId);
+          console.log('Main back camera:', mainBack.label);
+        }
+        if (mainFront) {
+          setMainFrontId(mainFront.deviceId);
+          console.log('Main front camera:', mainFront.label);
+        }
+
+        setCameraReady(true);
+      } catch (error) {
+        console.error('Error initializing cameras:', error);
+        // Fallback: just use facingMode
+        setCameraReady(true);
+      }
+    };
+    initCameras();
+  }, []);
 
   const handleSwitchCamera = () => {
-    setFacingMode(prev => prev === 'environment' ? 'user' : 'environment');
+    setIsFrontCamera(prev => !prev);
   };
 
+  // Capture screenshot and crop to exact 3:4 portrait
   const capture = useCallback(() => {
-    const imageSrc = webcamRef.current.getScreenshot();
-    if (imageSrc) {
-      setPhotoPreview(imageSrc);
+    const video = webcamRef.current?.video;
+    if (!video) return;
+
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return;
+
+    // Calculate crop region for 3:4 portrait (width:height = 3:4)
+    const targetRatio = 3 / 4;
+    let cropW, cropH, offsetX, offsetY;
+
+    if (vw / vh > targetRatio) {
+      // Video is wider than 3:4 — crop sides
+      cropH = vh;
+      cropW = Math.round(vh * targetRatio);
+      offsetX = Math.round((vw - cropW) / 2);
+      offsetY = 0;
+    } else {
+      // Video is taller than 3:4 — crop top/bottom
+      cropW = vw;
+      cropH = Math.round(vw / targetRatio);
+      offsetX = 0;
+      offsetY = Math.round((vh - cropH) / 2);
     }
-  }, [webcamRef]);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = cropW;
+    canvas.height = cropH;
+    const ctx = canvas.getContext('2d');
+
+    // If front camera and mirrored, flip horizontally
+    if (isFrontCamera) {
+      ctx.translate(cropW, 0);
+      ctx.scale(-1, 1);
+    }
+
+    ctx.drawImage(video, offsetX, offsetY, cropW, cropH, 0, 0, cropW, cropH);
+
+    // Export as high-quality JPEG
+    const imageSrc = canvas.toDataURL('image/jpeg', 0.95);
+    setPhotoPreview(imageSrc);
+  }, [isFrontCamera]);
 
   const handleCancel = () => {
     setPhotoPreview(null);
@@ -43,9 +147,11 @@ const CameraApp = () => {
       const blob = await res.blob();
       const file = new File([blob], `photo_${Date.now()}.jpg`, { type: 'image/jpeg' });
 
-      // 2. Compress Image
+      // 2. Compress Image (light compression to preserve quality for important moments)
       const options = {
-        maxSizeMB: 3,
+        maxSizeMB: 10,
+        maxWidthOrHeight: 2560,
+        initialQuality: 0.92,
         useWebWorker: true,
       };
       
@@ -103,11 +209,16 @@ const CameraApp = () => {
     }
   };
 
+  // Build video constraints: use specific deviceId if available, fallback to facingMode
+  const activeDeviceId = isFrontCamera ? mainFrontId : mainBackId;
+  
   const videoConstraints = {
     width: { ideal: 1920 },
     height: { ideal: 2560 },
-    aspectRatio: 0.75, // 3:4 Portrait
-    facingMode: facingMode
+    ...(activeDeviceId 
+      ? { deviceId: { exact: activeDeviceId } } 
+      : { facingMode: isFrontCamera ? 'user' : 'environment' }
+    )
   };
 
   return (
@@ -130,15 +241,18 @@ const CameraApp = () => {
 
       {/* Viewfinder 3:4 */}
       <div className="relative w-full max-w-md aspect-[3/4] bg-zinc-900 shadow-2xl">
-        <Webcam
-          audio={false}
-          ref={webcamRef}
-          screenshotFormat="image/jpeg"
-          videoConstraints={videoConstraints}
-          mirrored={isFrontCamera}
-          className="w-full h-full object-cover"
-          key={facingMode}
-        />
+        {cameraReady && (
+          <Webcam
+            audio={false}
+            ref={webcamRef}
+            screenshotFormat="image/jpeg"
+            screenshotQuality={0.95}
+            videoConstraints={videoConstraints}
+            mirrored={isFrontCamera}
+            className="w-full h-full object-cover"
+            key={isFrontCamera ? 'front' : 'back'}
+          />
+        )}
       </div>
 
       {/* Shutter Button Container */}
