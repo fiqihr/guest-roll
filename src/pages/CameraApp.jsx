@@ -6,32 +6,69 @@ import { useAppContext } from '../context/AppContext';
 import CameraPreview from '../components/CameraPreview';
 
 /**
- * Filter video devices to find the main back and main front camera.
- * Excludes ultrawide, macro, depth, and other non-primary cameras.
+ * Find the camera with the highest resolution from a list of devices.
+ * The primary/main camera always supports the highest resolution
+ * compared to ultrawide, macro, or depth cameras.
  */
-const findMainCameras = (videoDevices) => {
-  const excludeKeywords = ['wide', 'ultra', 'macro', 'depth', 'tele', 'infrared'];
-  
-  const isExcluded = (label) => {
-    const lower = label.toLowerCase();
-    return excludeKeywords.some(kw => lower.includes(kw));
-  };
+const findHighestResCamera = async (cameras) => {
+  let bestCamera = cameras[0];
+  let bestResolution = 0;
 
-  // Find back cameras (not excluded)
+  for (const camera of cameras) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: { exact: camera.deviceId },
+          width: { ideal: 9999 },
+          height: { ideal: 9999 }
+        }
+      });
+      const track = stream.getVideoTracks()[0];
+      const settings = track.getSettings();
+      const resolution = (settings.width || 0) * (settings.height || 0);
+
+      // Stop the test stream immediately
+      stream.getTracks().forEach(t => t.stop());
+
+      console.log(`Camera "${camera.label}": ${settings.width}x${settings.height} (${resolution}px)`);
+
+      if (resolution > bestResolution) {
+        bestResolution = resolution;
+        bestCamera = camera;
+      }
+    } catch (e) {
+      console.warn(`Could not test camera "${camera.label}":`, e.message);
+    }
+  }
+
+  return bestCamera;
+};
+
+/**
+ * Find the main back and front cameras.
+ * Groups by facing direction, then picks the highest-resolution back camera
+ * (which is always the main/primary sensor on Android devices).
+ */
+const findMainCameras = async (videoDevices) => {
   const backCameras = videoDevices.filter(d => {
     const label = d.label.toLowerCase();
-    const isBack = label.includes('back') || label.includes('rear') || label.includes('environment');
-    return isBack && !isExcluded(d.label);
+    return label.includes('back') || label.includes('rear') || label.includes('environment');
   });
 
-  // Find front cameras (not excluded)
   const frontCameras = videoDevices.filter(d => {
     const label = d.label.toLowerCase();
-    const isFront = label.includes('front') || label.includes('user') || label.includes('face');
-    return isFront && !isExcluded(d.label);
+    return label.includes('front') || label.includes('user') || label.includes('face');
   });
 
-  const mainBack = backCameras[0] || null;
+  // For back camera: pick the one with highest resolution (= main sensor)
+  let mainBack = null;
+  if (backCameras.length > 1) {
+    mainBack = await findHighestResCamera(backCameras);
+  } else {
+    mainBack = backCameras[0] || null;
+  }
+
+  // For front camera: usually only one, pick the first
   const mainFront = frontCameras[0] || null;
 
   return { mainBack, mainFront };
@@ -49,7 +86,7 @@ const CameraApp = () => {
   const [mainFrontId, setMainFrontId] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
 
-  // Enumerate devices once to find main back & front cameras
+  // Enumerate devices and find the correct main cameras
   useEffect(() => {
     const initCameras = async () => {
       try {
@@ -59,26 +96,26 @@ const CameraApp = () => {
         const allDevices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = allDevices.filter(d => d.kind === 'videoinput');
 
-        // IMPORTANT: Stop the temporary stream so it doesn't block the Webcam component
+        // Stop the temporary stream so it doesn't block subsequent camera access
         tempStream.getTracks().forEach(track => track.stop());
 
-        console.log('Available cameras:', videoDevices.map(d => `${d.label} (${d.deviceId.slice(0,8)})`));
+        console.log('All cameras found:', videoDevices.map(d => `${d.label} (${d.deviceId.slice(0,8)})`));
 
-        const { mainBack, mainFront } = findMainCameras(videoDevices);
+        const { mainBack, mainFront } = await findMainCameras(videoDevices);
 
         if (mainBack) {
           setMainBackId(mainBack.deviceId);
-          console.log('Main back camera:', mainBack.label);
+          console.log('✅ Selected main BACK camera:', mainBack.label);
         }
         if (mainFront) {
           setMainFrontId(mainFront.deviceId);
-          console.log('Main front camera:', mainFront.label);
+          console.log('✅ Selected main FRONT camera:', mainFront.label);
         }
 
         setCameraReady(true);
       } catch (error) {
         console.error('Error initializing cameras:', error);
-        // Fallback: just use facingMode
+        // Fallback: just use facingMode without specific deviceId
         setCameraReady(true);
       }
     };
@@ -147,9 +184,6 @@ const CameraApp = () => {
 
     try {
       // Use the photo directly — no additional compression to preserve quality
-      // The canvas already exports at 0.92 JPEG quality which is excellent
-
-      // Save in React state for the ephemeral Thank You page recap
       addCapturedPhoto(photoPreview);
 
       // Upload to Google Drive via Apps Script
