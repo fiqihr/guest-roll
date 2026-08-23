@@ -8,7 +8,7 @@ import { clearLocalPhotos } from '../utils/storage'
 
 export const AppProvider = ({ children }) => {
   const [guestName, setGuestName] = useState('')
-  const [remainingShots, setRemainingShots] = useState(10) // Reset back to 15 shots
+  const [remainingShots, setRemainingShots] = useState(5) //  5 shots
   const [capturedPhotos, setCapturedPhotos] = useState([]) // Only in memory!
 
   // Persist guest info in localStorage so it doesn't reset on refresh
@@ -39,7 +39,7 @@ export const AppProvider = ({ children }) => {
 
   const resetSession = useCallback(() => {
     setGuestName('')
-    setRemainingShots(10)
+    setRemainingShots(5)
     setCapturedPhotos([])
     localStorage.removeItem('guestName')
     localStorage.removeItem('remainingShots')
